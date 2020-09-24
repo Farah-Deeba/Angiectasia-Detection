@@ -1,0 +1,88 @@
+clear all
+close all
+clc
+
+% this code will implement automatic detection of angiectasia from both
+% capsule and wired endoscopic image
+% the related paper is partly published in CMBEC.
+% available in
+% "https://www.researchgate.net/publication/302500277_A_saliency-based_unsupervised_method_for_angioectasia_detection_in_capsule_endoscopic_images"
+% also an invited paper has been submitted in JMBE
+
+
+% add the folder containing angiectasia images
+addpath('C:\Farah\Codes_Farah\Angiectasia_detection\WCE Testing\Angyodysplasia_training');
+d=dir('C:\Farah\Codes_Farah\Angiectasia_detection\WCE Training\Angyodysplasia_training');
+
+for k=3:2:length(d)
+    figure, imshow(d(k).name)
+    [image, pos]=imcrop(imread(d(k).name)); % crop the image so that no black background remains.
+    image=imresize(image , [360 360]);
+    hsvim = rgb2hsv(image);
+    sat = hsvim(:,:,2);
+    
+    prompt = 'What is the original value? ';
+    x = input(prompt);  % input x=0 for wired endoscopic image x=1 for capsule;
+    image_wo_border1= image;
+    image_wo_border = colorspace('luv<-rgb',image_wo_border1);
+    image_wo_border=image_wo_border(:,:,2);
+    image_wo_border=double(image_wo_border);
+
+
+    [m,n,p]=size(image_wo_border);
+    w_size=19;
+    sample_number=1;
+
+    image_wo_border_pad=padarray(image_wo_border,[(w_size-1)/2 (w_size-1)/2], 'symmetric');
+    
+  
+    for i=1:m
+        for j=1:n
+            image_patch{i,j}=image_wo_border_pad(i:i+w_size-1,j:j+w_size-1,:);
+            X(:,sample_number) = reshape(image_patch{i,j},w_size*w_size,1);
+            sample_number=sample_number+1;
+        end
+    end
+    % calculating the saliency using patch distinctness. This is implementation of the algorithm
+    % Ran Margolin, et al. "What Makes a Patch Distinct?"
+    X(isnan(X))=0;
+    [eigenval,eigenvec,explain,Y]=pca_stan(X,w_size*w_size); 
+    clear X;
+    PD11=sum(abs(Y),1);
+    PD_image1=reshape(PD11,m,n);
+    PD_image1=(PD_image1-min(PD_image1(:)))./(max(PD_image1(:))-min(PD_image1(:)));
+
+    %calculating IHb index (detail in the paper)
+    image_wo_border1=im2double(image_wo_border1);
+    immm=32*log2(image_wo_border1(:,:,1)./(image_wo_border1(:,:,2)));
+     [a,b]=sort(unique(immm));
+    immm(find(isinf(immm)==1))=a(end-1)+1;
+    immm=(immm-min(immm(:)))./(max(immm(:))-min(immm(:)));
+% 
+%     PD=PD_image1';
+%     PD(sat<0.5) = 0;
+%     % combining both saliency maps
+%     f_s_m=max(immm,PD);
+%     if x==1
+%         f_s_m(PD<0.4)=PD(PD<0.4);
+%     else
+%     f_s_m(immm<0.2)=immm(immm<0.2);
+%     end
+%     f_s_m=(f_s_m-min(f_s_m(:)))./(max(f_s_m(:))-min(f_s_m(:)));
+f_s_m = immm;
+    figure,
+    subplot 221, imshow(image_wo_border1),title('original')
+     subplot 222,imshow(immm,[]),colormap jet,title('IHb')
+     subplot 223,imshow(PD_image1',[]),colormap jet,title('PD_image1')
+      subplot 224,imshow(f_s_m,[]),colormap jet,title('PD'), hold on
+      f_s_m(sat<0.5) = 0;
+im =im2bw(f_s_m,0.55);
+se = strel('line',1,1);
+dilatedBW = imdilate(im2uint8(im),se);
+CC = bwconncomp(dilatedBW);
+rp=regionprops(CC,'Eccentricity','Area');
+idx = find([rp.Area] > 100 & [rp.Eccentricity] < 0.95);
+BW2 = ismember(labelmatrix(CC), idx);
+figure,imshow(BW2)
+
+end
